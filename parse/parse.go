@@ -12,6 +12,7 @@ import (
 	"golang.org/x/tools/go/packages"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -47,20 +48,30 @@ func (g *GoParser) ModuleName() string {
 
 func (g *GoParser) Parse(relPath, name string) ([]*models.Config, error) {
 	tmpRes := make(map[string]*models.Config)
-	_, err := g.parseFile("", relPath, name, tmpRes)
+
+	index := new(int)
+	*index = 0
+
+	_, err := g.parseFile("", relPath, name, tmpRes, index)
 	if err != nil {
 		return nil, err
 	}
 
-	var res []*models.Config
-
-	for _, v := range tmpRes {
-		res = append(res, v)
-	}
-	return res, nil
+	return g.order(tmpRes), nil
 }
 
-func (g *GoParser) parseFile(prefix, path, name string, tmpRes map[string]*models.Config) (bool, error) {
+func (g *GoParser) order(m map[string]*models.Config) []*models.Config {
+	l := make([]*models.Config, 0)
+	for _, v := range m {
+		l = append(l, v)
+	}
+	sort.Slice(l, func(i, j int) bool {
+		return l[i].Index < l[j].Index
+	})
+	return l
+}
+
+func (g *GoParser) parseFile(prefix, path, name string, tmpRes map[string]*models.Config, orderIndex *int) (bool, error) {
 	if _, ok := tmpRes[filepath.Join(prefix, name)]; ok {
 		return true, nil
 	}
@@ -94,7 +105,7 @@ func (g *GoParser) parseFile(prefix, path, name string, tmpRes map[string]*model
 	}
 
 	confMap := make(map[string]*models.Config)
-	c := g.parseObj(prefix, confMap, info, obj)
+	c := g.parseObj(prefix, confMap, info, obj, orderIndex)
 	if c == nil {
 		return true, nil
 	}
@@ -113,7 +124,8 @@ func (g *GoParser) parseFile(prefix, path, name string, tmpRes map[string]*model
 					continue
 				} else {
 					for _, importFile := range importFiles {
-						matched, err := g.parseFile(filepath.Dir(importFile), importFile, confName, tmpRes)
+						*orderIndex += 1
+						matched, err := g.parseFile(filepath.Dir(importFile), importFile, confName, tmpRes, orderIndex)
 						if err != nil || !matched {
 							continue
 						}
@@ -130,7 +142,7 @@ func (g *GoParser) parseFile(prefix, path, name string, tmpRes map[string]*model
 					if err != nil {
 						continue
 					}
-					matched, err := g.parseFile(prefix, relPath, k, tmpRes)
+					matched, err := g.parseFile(prefix, relPath, k, tmpRes, orderIndex)
 					if err != nil || !matched {
 						continue
 					}
@@ -145,6 +157,8 @@ func (g *GoParser) parseFile(prefix, path, name string, tmpRes map[string]*model
 						return true, err
 					}
 					if constConf, ok := constMap[k]; ok {
+						constConf.Index = *orderIndex
+						*orderIndex += 1
 						tmpRes[k] = constConf
 					}
 				} else {
@@ -189,6 +203,20 @@ func (g *GoParser) parseImport(astImports []*ast.ImportSpec, pkgImports map[stri
 	return pkgMap, nil
 }
 
+func (g *GoParser) getComment(groups ...*ast.CommentGroup) string {
+	var comment string
+	for _, group := range groups {
+		for _, line := range group.List {
+			c := strings.TrimPrefix(line.Text, "/*")
+			c = strings.TrimPrefix(c, "//")
+			c = strings.TrimSuffix(c, "*/")
+			c = strings.Replace(c, "\t", "", -1)
+			comment += strings.TrimSpace(c)
+		}
+	}
+	return comment
+}
+
 func (g *GoParser) getConst(info *types.Info, decls []ast.Decl) (map[string]*models.Config, error) {
 	res := make(map[string]*models.Config)
 	for _, decl := range decls {
@@ -197,14 +225,13 @@ func (g *GoParser) getConst(info *types.Info, decls []ast.Decl) (map[string]*mod
 				v := spec.(*ast.ValueSpec)
 				var comment string
 				if v.Doc != nil {
-					for _, line := range v.Doc.List {
-						comment += strings.TrimSpace(strings.TrimPrefix(line.Text, "//"))
-					}
+					comment = g.getComment(v.Doc)
 				}
 				if v.Comment != nil {
-					for _, line := range v.Comment.List {
-						comment += strings.TrimSpace(strings.TrimPrefix(line.Text, "//"))
+					if comment != "" {
+						comment += "\n\n"
 					}
+					comment += g.getComment(v.Comment)
 				}
 				for _, n := range v.Names {
 					obj := info.ObjectOf(n)
@@ -258,13 +285,13 @@ func (g *GoParser) loadPackage(fs *token.FileSet, af *ast.File, pkgPath string) 
 	return packages.Load(cfg, pkgPath)
 }
 
-func (g *GoParser) parseObj(prefix string, confMap map[string]*models.Config, info *types.Info, obj *ast.Object) *models.Config {
+func (g *GoParser) parseObj(prefix string, confMap map[string]*models.Config, info *types.Info, obj *ast.Object, index *int) *models.Config {
 	if obj == nil {
 		return nil
 	}
 
 	var (
-		res = &models.Config{Name: filepath.Join(prefix, obj.Name)}
+		res = &models.Config{Name: filepath.Join(prefix, obj.Name), Index: *index}
 	)
 
 	switch obj.Kind {
@@ -280,10 +307,12 @@ func (g *GoParser) parseObj(prefix string, confMap map[string]*models.Config, in
 		//		confMap[obj.Name] = res
 		//	}
 		case *ast.StructType:
-			resFields := g.parseStructField(prefix, confMap, info, spec.Type, "")
+			*index += 1
+			resFields := g.parseStructField(prefix, confMap, info, spec.Type, "", index)
 			res.Fields = append(res.Fields, resFields...)
 		default:
-			res.Type = g.parseType(prefix, confMap, info, spec.Type)
+			*index += 1
+			res.Type = g.parseType(prefix, confMap, info, spec.Type, index)
 			if _, ok := confMap[obj.Name]; !ok {
 				confMap[obj.Name] = res
 			}
@@ -294,7 +323,9 @@ func (g *GoParser) parseObj(prefix string, confMap map[string]*models.Config, in
 	return res
 }
 
-func (g *GoParser) parseStructField(prefix string, confMap map[string]*models.Config, info *types.Info, expr ast.Expr, name string) []*models.Field {
+func (g *GoParser) parseStructField(prefix string, confMap map[string]*models.Config, info *types.Info, expr ast.Expr,
+	name string, index *int) []*models.Field {
+
 	var res []*models.Field
 	switch t := expr.(type) {
 	case *ast.StructType:
@@ -306,6 +337,24 @@ func (g *GoParser) parseStructField(prefix string, confMap map[string]*models.Co
 
 				resField := &models.Field{}
 
+				var comment string
+				if field.Doc != nil {
+					comment = g.getComment(field.Doc)
+				}
+				if field.Comment != nil {
+					if comment != "" {
+						comment += "\n\n"
+					}
+					comment += g.getComment(field.Comment)
+				}
+				resField.Comment = comment
+
+				if field.Tag != nil {
+					tag := strings.TrimPrefix(field.Tag.Value, "`")
+					tag = strings.TrimSuffix(tag, "`")
+					resField.Tag = tag
+				}
+
 				switch field.Type.(type) {
 				case *ast.StructType:
 					var childName string
@@ -314,11 +363,11 @@ func (g *GoParser) parseStructField(prefix string, confMap map[string]*models.Co
 					} else {
 						childName = field.Names[0].Name
 					}
-					childField := g.parseStructField(prefix, confMap, info, field.Type, childName)
+					childField := g.parseStructField(prefix, confMap, info, field.Type, childName, index)
 					res = append(res, childField...)
 					continue
 				default:
-					resField.Type = g.parseType(prefix, confMap, info, field.Type)
+					resField.Type = g.parseType(prefix, confMap, info, field.Type, index)
 				}
 
 				if field.Names != nil {
@@ -340,13 +389,13 @@ func (g *GoParser) parseStructField(prefix string, confMap map[string]*models.Co
 	return res
 }
 
-func (g *GoParser) parseType(prefix string, confMap map[string]*models.Config, info *types.Info, expr ast.Expr) string {
+func (g *GoParser) parseType(prefix string, confMap map[string]*models.Config, info *types.Info, expr ast.Expr, index *int) string {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		if confMap != nil && (t.Obj != nil || !g.isBasic(t.Name)) {
 			if t.Obj != nil {
 				if _, ok := confMap[t.Name]; !ok {
-					c := g.parseObj(prefix, confMap, info, t.Obj)
+					c := g.parseObj(prefix, confMap, info, t.Obj, index)
 					confMap[t.Name] = c
 				}
 			} else {
@@ -357,11 +406,13 @@ func (g *GoParser) parseType(prefix string, confMap map[string]*models.Config, i
 		}
 		return t.Name
 	case *ast.StarExpr:
-		return "*" + g.parseType(prefix, confMap, info, t.X)
+		return "*" + g.parseType(prefix, confMap, info, t.X, index)
 	case *ast.MapType:
-		return fmt.Sprintf("map[%s]%s", g.parseType(prefix, confMap, info, t.Key), g.parseType(prefix, confMap, info, t.Value))
+		return fmt.Sprintf("map[%s]%s", g.parseType(prefix, confMap, info, t.Key, index),
+			g.parseType(prefix, confMap, info, t.Value, index))
 	case *ast.SelectorExpr:
-		name := fmt.Sprintf("%s.%s", g.parseType(prefix, nil, info, t.X), g.parseType(prefix, nil, info, t.Sel))
+		name := fmt.Sprintf("%s.%s", g.parseType(prefix, nil, info, t.X, index),
+			g.parseType(prefix, nil, info, t.Sel, index))
 		if confMap != nil {
 			if _, ok := confMap[name]; !ok {
 				confMap[name] = nil
@@ -369,7 +420,7 @@ func (g *GoParser) parseType(prefix string, confMap map[string]*models.Config, i
 		}
 		return name
 	case *ast.ArrayType:
-		return "[]" + g.parseType(prefix, confMap, info, t.Elt)
+		return "[]" + g.parseType(prefix, confMap, info, t.Elt, index)
 	case *ast.ChanType:
 		var flag string
 		switch t.Dir {
@@ -380,12 +431,12 @@ func (g *GoParser) parseType(prefix string, confMap map[string]*models.Config, i
 		case ast.RECV:
 			flag = "<-chan"
 		}
-		return flag + " " + g.parseType(prefix, confMap, info, t.Value)
+		return flag + " " + g.parseType(prefix, confMap, info, t.Value, index)
 	case *ast.FuncType:
 		var params []string
 		if t.Params != nil {
 			for _, field := range t.Params.List {
-				typ := g.parseType(prefix, confMap, info, field.Type)
+				typ := g.parseType(prefix, confMap, info, field.Type, index)
 				if len(field.Names) == 0 {
 					params = append(params, typ)
 				} else {
@@ -400,7 +451,7 @@ func (g *GoParser) parseType(prefix string, confMap map[string]*models.Config, i
 		var results []string
 		if t.Results != nil {
 			for _, field := range t.Results.List {
-				typ := g.parseType(prefix, confMap, info, field.Type)
+				typ := g.parseType(prefix, confMap, info, field.Type, index)
 				if len(field.Names) == 0 {
 					results = append(results, typ)
 				} else {
