@@ -7,11 +7,12 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"godoc/models"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/hjhsamuel/godoc/models"
 
 	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"

@@ -3,9 +3,10 @@ package md_file
 import (
 	"bytes"
 	"fmt"
-	"godoc/models"
 	"os"
 	"strings"
+
+	"github.com/hjhsamuel/godoc/models"
 )
 
 type Markdown struct {

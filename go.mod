@@ -1,4 +1,4 @@
-module godoc
+module github.com/hjhsamuel/godoc
 
 go 1.20
 

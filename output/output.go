@@ -1,9 +1,9 @@
 package output
 
 import (
+	"github.com/hjhsamuel/godoc/models"
+	"github.com/hjhsamuel/godoc/output/md_file"
 	"github.com/pkg/errors"
-	"godoc/models"
-	"godoc/output/md_file"
 )
 
 type Output interface {
