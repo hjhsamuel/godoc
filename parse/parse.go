@@ -8,12 +8,13 @@ import (
 	"go/token"
 	"go/types"
 	"godoc/models"
-	"golang.org/x/mod/modfile"
-	"golang.org/x/tools/go/packages"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"golang.org/x/mod/modfile"
+	"golang.org/x/tools/go/packages"
 )
 
 const (
@@ -285,7 +286,8 @@ func (g *GoParser) loadPackage(fs *token.FileSet, af *ast.File, pkgPath string) 
 	return packages.Load(cfg, pkgPath)
 }
 
-func (g *GoParser) parseObj(prefix string, confMap map[string]*models.Config, info *types.Info, obj *ast.Object, index *int) *models.Config {
+func (g *GoParser) parseObj(prefix string, confMap map[string]*models.Config, info *types.Info, obj *ast.Object,
+	index *int) *models.Config {
 	if obj == nil {
 		return nil
 	}

@@ -4,8 +4,7 @@ type Config struct {
 	Name   string   `json:"name"`
 	Type   string   `json:"type"`
 	Fields []*Field `json:"fields"`
-
-	Index int `json:"-"` // sort index
+	Index  int      `json:"index"`
 }
 
 type Field struct {
@@ -14,4 +13,5 @@ type Field struct {
 	Tag     string `json:"tag"`
 	Comment string `json:"comment"`
 	Value   string `json:"value"`
+	Index   int    `json:"index"`
 }
