@@ -20,5 +20,11 @@ type Token struct {
 
 type PackageInfo struct {
 	Content *Token // complete code
-	Name    *Token // name of the package
+	Name    *Token // nickname of the package
+	Package *Token // real name of the package, COULD BE NIL
+}
+
+type ImportInfo struct {
+	Content  *Token         // complete code
+	Packages []*PackageInfo // imported packages
 }
